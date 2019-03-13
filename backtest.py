@@ -184,7 +184,7 @@ class Backtest:
 
     #############################################################################################
 
-    def portfolio(self, backtest):
+    def _portfolio(self, backtest):
         ''' HERE THE BACKTEST ADD PORTFOLIO MANAGEMENT TO DATAFRAME '''
 
         indicador = pd.read_pickle('./Data/DF/INDICADOR.pickle')
@@ -351,17 +351,12 @@ class Backtest:
         df = pd.concat([df, db5], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
 
         df['Total_Result'] = df['Result_Partial'] + df['Result_Close']
-
-        with open('./Data/DF/PORTFOLIO.pickle', 'wb') as f:
-            pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL) 
-
-        print(df.head())
         
         return df
 
     #############################################################################################
 
-    def backtest(self, df, model='backtest'):
+    def backtest(self, df, model):
         from multiprocessing import Pool, cpu_count
         num_process = min(df.shape[1], cpu_count())
         
@@ -372,7 +367,17 @@ class Backtest:
                 results_list = pool.map(self._start, seq)
 
                 db = pd.concat(results_list)
-                print(db.head())
+                print(db.head(), db.tail())
+
+        elif model == 'portfolio':
+            with Pool(num_process) as pool:
+                seq = [df[df.index.year == i] for i in df.index.year.unique()]
+
+                results_list = pool.map(self._portfolio, seq)
+
+                db = pd.concat(results_list)
+
+                print(db.head(), db.tail())
 
         elif model == 'summary':
             with Pool(num_process) as pool:
@@ -381,6 +386,8 @@ class Backtest:
                 results_list = pool.map(self._summary, seq)
 
                 db = pd.concat(results_list)
+
+                print(db.head(), db.tail())
                 db_st = db.groupby(level=[0,1]).sum()
                 
             print('\n Per Asset_Year ... RETURN -> ', 
