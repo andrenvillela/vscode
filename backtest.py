@@ -14,12 +14,15 @@ class Backtest:
 
 #############################################################################################
 
-    def backtest(self, df, database):
+    def _start(self, df):
             """
             DF HAVE THE RESULTS OF STRATEGY().
             ====================
             DATABASE HAVE THE FILE USED TO RUN STRATEGY().
             """
+
+            database = pd.read_pickle('./Data/DF/INDICADOR.pickle')
+            database = database[database.Asset == df.Asset[0]]
 
             lt_long = []
             df1 = pd.DataFrame()
@@ -127,10 +130,12 @@ class Backtest:
 
     #############################################################################################
 
-    def backtest_st(self, df, database):
+    def _summary(self, df):
             ''' SUMMARY OF THE BACKTEST() REPORTING ELA ANALISA O ARQUIVO BACKTEST INFORMANDO TX_ACERTO, RISK_RETORNO, RETORNO '''
             import warnings
             warnings.filterwarnings("ignore") #, message="invalid value encountered in long_scalars")
+
+            database = pd.read_pickle('./Data/DF/INDICADOR.pickle')
 
             summary = {}
             start = df.index[0].year
@@ -138,7 +143,7 @@ class Backtest:
             db = pd.DataFrame()
 
             if 'Total_Result' in df.columns:
-                perc = 'Total_Resul'
+                perc = 'Total_Result'
             else:
                 perc = 'Change%'
 
@@ -173,12 +178,17 @@ class Backtest:
                     
                     db = pd.concat([db, pd.DataFrame(summary).T])
                     db = db.dropna()
+
                 
             return db
 
     #############################################################################################
 
-    def portfolio(self, backtest, indicador):
+    def portfolio(self, backtest):
+        ''' HERE THE BACKTEST ADD PORTFOLIO MANAGEMENT TO DATAFRAME '''
+
+        indicador = pd.read_pickle('./Data/DF/INDICADOR.pickle')
+
         import warnings
         warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
         warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
@@ -204,11 +214,11 @@ class Backtest:
 
             db2 = db2.append(new)
         
-        return self.yesterday_portfolio(db2)
+        return self._yesterday_portfolio(db2)
 
     #############################################################################################
 
-    def yesterday_portfolio(self, portfolio_df):
+    def _yesterday_portfolio(self, portfolio_df):
         import warnings
         warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
         warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
@@ -234,11 +244,11 @@ class Backtest:
         df = portfolio_df.reset_index().set_index(['Date', 'Asset'])
         df = pd.concat([df, db3], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
 
-        return self.mprice(df)
+        return self._mprice(df)
 
     #############################################################################################
 
-    def mprice(self, yesterday_portfolio_df):
+    def _mprice(self, yesterday_portfolio_df):
         import warnings
         warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
         warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
@@ -273,11 +283,11 @@ class Backtest:
         df = df.reset_index().set_index(['Date', 'Asset'])
         df = pd.concat([df, db4], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
 
-        return self.result_partial(df)
+        return self._result_partial(df)
 
     #############################################################################################
 
-    def result_partial(self, mprice):
+    def _result_partial(self, mprice):
         import warnings
         warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
         warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
@@ -307,11 +317,11 @@ class Backtest:
         df = df.reset_index().set_index(['Date', 'Asset'])
         df = pd.concat([df, db4], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
 
-        return self.result_close(df)
+        return self._result_close(df)
 
     #############################################################################################
 
-    def result_close(self, result_partial):
+    def _result_close(self, result_partial):
         import warnings
         warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
         warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
@@ -342,5 +352,44 @@ class Backtest:
 
         df['Total_Result'] = df['Result_Partial'] + df['Result_Close']
 
+        with open('./Data/DF/PORTFOLIO.pickle', 'wb') as f:
+            pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL) 
 
+        print(df.head())
+        
         return df
+
+    #############################################################################################
+
+    def backtest(self, df, model='backtest'):
+        from multiprocessing import Pool, cpu_count
+        num_process = min(df.shape[1], cpu_count())
+        
+        if model == 'backtest':
+            with Pool(num_process) as pool:
+                seq = [df[df['Asset'] == i] for i in df.Asset.unique()]
+
+                results_list = pool.map(self._start, seq)
+
+                db = pd.concat(results_list)
+                print(db.head())
+
+        elif model == 'summary':
+            with Pool(num_process) as pool:
+                seq = [df[df['Asset'] == i] for i in df.Asset.unique()]
+
+                results_list = pool.map(self._summary, seq)
+
+                db = pd.concat(results_list)
+                db_st = db.groupby(level=[0,1]).sum()
+                
+            print('\n Per Asset_Year ... RETURN -> ', 
+                round((sum([db.loc[i, :]['TOTAL_RETURN'].mean() for i in db.index.unique()]) / 
+                db.reset_index().set_index('level_1').index.nunique()),2), 
+                '& Win_X_Lose ->', round((db_st.groupby(level=[0,1]).mean().mean().Win_X_Lose),2), 
+                '& RISK_RETURN ->', round((db_st.groupby(level=[0,1]).mean().mean().RISK_RETURN),2),
+                '& SHARPE_RATIO ->', round((db['TOTAL_RETURN'].mean() / db['TOTAL_RETURN'].std()) * 
+                (db.reset_index().set_index('level_1').index.nunique()),2))
+    
+        with open(f'./Data/DF/{model.upper()}.pickle', 'wb') as f:
+            pickle.dump(db, f, protocol=pickle.HIGHEST_PROTOCOL)   
