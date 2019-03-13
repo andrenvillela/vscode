@@ -8,8 +8,18 @@ import timeit
 ''' ENTRY THE BACKTEST TO EXECUTE THE PROGRAM '''
 Bt = Backtest()
 
-''' STRATEGY NAME, WILL BE USED TO SAVE FILES AND ON DATAFRAME '''
-name = 'STOCH'
+''' STRATEGY NAME, WILL BE USED ON DATAFRAME '''
+name = 'SMA7-20-50'
+
+df = pd.read_pickle('./Data/DF/INDICADOR.pickle')
+
+''' FILTRE FOR THE DATA TO BE TESTED, YOU CAN FILTRE BY DATE AND ASSETS '''
+# df = df[df.index > '2017-10-1']
+# df = df[(df.Asset == 'PETR4') | (df.Asset == 'BOVA11') | (df.Asset == 'VALE3')]
+
+''' IN CASE INDICATORS ARE REQUIRED AND NOT IN THE DATA ADD BELOW'''
+''' BELOW EXAMPLE OF POSSIBLE INDICATOR '''
+# df['SMA7'] = df.Close.rolling(7).mean()
 
 #################################################################################################
 
@@ -27,12 +37,12 @@ def strategy(df):
 
     for i in range(len(df.index)):
         '''HERE YOU ADD THE IDEA FOR BUY-LONG''' ####################################
-        if df.iloc[i].RSI_mK > df.iloc[i].RSI_mD and df.iloc[i].RSI_5K > df.iloc[i].RSI_5D and df.iloc[i].RSI_5K < 50:
+        if df.iloc[i].SMA7 > df.iloc[i].SMA20 and df.iloc[i].SMA20 > df.iloc[i].SMA50:
             
             strag_l.update({df.index[i]: (name, df.Asset[i], 'LONG', df.Close[i])})
             temp = df.index[i]
         
-        elif temp in strag_l.keys(): ############################# SETUP EXIT #######
+        elif df.iloc[i].SMA20 < df.iloc[i].SMA50: ############################# SETUP EXIT #######
 
             strag_l.update({df.index[i]: (name, df.Asset[i], 'cLONG', df.Close[i])}) 
 
@@ -41,13 +51,13 @@ def strategy(df):
 
     for i in range(len(df.index)):
         '''HERE YOU ADD THE IDEA FOR SELL-SHORT''' ####################################
-        if df.iloc[i].RSI_mK < df.iloc[i].RSI_mD and df.iloc[i].RSI_5K < df.iloc[i].RSI_5D and df.iloc[i].RSI_5K > 50:
+        if df.iloc[i].SMA7 < df.iloc[i].SMA20 and df.iloc[i].SMA20 < df.iloc[i].SMA50:
 
             strag_s.update({df.index[i]: (name, df.Asset[i], 'SHORT', df.Close[i])})
             temp = df.index[i]
 
         
-        elif temp in strag_s.keys(): ############################# SETUP EXIT #######
+        elif df.iloc[i].SMA20 > df.iloc[i].SMA50: ############################# SETUP EXIT #######
 
             strag_s.update({df.index[i]: (name, df.Asset[i], 'cSHORT', df.Close[i])}) 
 
@@ -77,24 +87,13 @@ def strategy_mul(func, df):
 
         db = pd.concat(results_list)
 
-    with open('./Data/DF/ESTRATEGIA.pickle', 'wb') as f:
+    with open(f'./Data/DF/{name}.pickle', 'wb') as f:
         pickle.dump(db, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     print(f'Qty of Assets -> {db.Asset.nunique()} \n')
     return db.head(3), db.tail(3)
 
 #################################################################################################
-
-df = pd.read_pickle('./Data/DF/INDICADOR.pickle')
-
-''' FILTRE FOR THE DATA TO BE TESTED, YOU CAN FILTRE BY DATE AND ASSETS '''
-# df = df[df.index > '2017-10-1']
-# df = df[(df.Asset == 'PETR4') | (df.Asset == 'BOVA11') | (df.Asset == 'VALE3')]
-
-''' IN CASE INDICATORS ARE REQUIRED AND NOT IN THE DATA ADD BELOW'''
-''' BELOW EXAMPLE OF POSSIBLE INDICATOR '''
-# df['SMA7'] = df.Close.rolling(7).mean()
-
 
 start_time = timeit.default_timer()
 
