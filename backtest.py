@@ -175,10 +175,10 @@ class Backtest:
                     summary = {(i, (start-1)): {'WIN_LONG': win_long, 'WIN_SHORT': win_short, 
                             'Win_X_Lose': win_x_lose, 'RISK_RETURN_LONG': risk_return_long, 'RISK_RETURN_SHORT': risk_return_short,
                             'RISK_RETURN': risk_return, 'RETURN_LONG': return_long, 'RETURN_SHORT': return_short, 'TOTAL_RETURN': tt_return}}
-                    
-                    db = pd.concat([db, pd.DataFrame(summary).T])
-                    db = db.dropna()
 
+
+                    summary_db = pd.DataFrame(summary).T.fillna(0)
+                    db = pd.concat([db, summary_db])
                 
             return db
 
@@ -188,10 +188,6 @@ class Backtest:
         ''' HERE THE BACKTEST ADD PORTFOLIO MANAGEMENT TO DATAFRAME '''
 
         indicador = pd.read_pickle('./Data/DF/INDICADOR.pickle')
-
-        import warnings
-        warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
-        warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
 
         calendar = pd.date_range(start=sorted(set(backtest.index))[0], end=sorted(set(backtest.index))[-1], freq='B')
 
@@ -220,114 +216,136 @@ class Backtest:
 
     def _yesterday_portfolio(self, portfolio_df):
         import warnings
-        warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
         warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
 
         calendar = pd.date_range(start=sorted(set(portfolio_df.index))[0], end=sorted(set(portfolio_df.index))[-1], freq='B')
+        calendar = [i.date() for i in calendar if i in portfolio_df.index.unique()]
+        calendar = pd.to_datetime(calendar)
 
         db3 = pd.DataFrame()
         db4 = pd.DataFrame()
 
-        for i in calendar:
-            lt_old = set([i for i in portfolio_df[portfolio_df.index == (i-1)].Asset])
-            lt_new = set([i for i in portfolio_df[portfolio_df.index == i].Asset])
+        for i in range(len(calendar)):
+            lt_old = set([i for i in portfolio_df[portfolio_df.index == (calendar[i-1])].Asset])
+            lt_new = set([i for i in portfolio_df[portfolio_df.index == calendar[i]].Asset])
             lt = lt_old.intersection(lt_new)
 
             if lt == set():
                 pass
             else:
                 for ii in lt:
-                    yesterday_portf = [portfolio_df[(portfolio_df.Asset == ii) & (portfolio_df.index == (i-1))].PortFolio][0][0]
-                    adjust_portf = {(i, ii): {'Yesterday_Portf': yesterday_portf}}
+                    yesterday_portf = [portfolio_df[(portfolio_df.Asset == ii) & (portfolio_df.index == calendar[i-1])].PortFolio][0][0]
+                    adjust_portf = {(calendar[i], ii): {'Yesterday_Portf': yesterday_portf}}
                     db3 = pd.concat([db3, pd.DataFrame(adjust_portf).T])
 
         df = portfolio_df.reset_index().set_index(['Date', 'Asset'])
         df = pd.concat([df, db3], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
 
-        return self._mprice(df)
+        return df
 
     #############################################################################################
 
     def _mprice(self, yesterday_portfolio_df):
-        import warnings
-        warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
-        warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
-
         df = yesterday_portfolio_df.copy()
+        
         calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
+        calendar = [i.date() for i in calendar if i in df.index.unique()]
+        calendar = pd.to_datetime(calendar)
 
         db4 = pd.DataFrame()
+        mprice = {}
 
-        for i in calendar:
-            for ii in df[df.index == i].Asset.unique():
-                if df[(df.Asset == ii) & (df.index == i)].iloc[0].Yesterday_Portf == 0:
-                    mPrice = {(i, ii): {'mPrice': df[(df.Asset == ii) & (df.index == i)].iloc[0].Entry_Price}}
-                    db4 = pd.concat([db4, pd.DataFrame(mPrice).T], sort=True)
-
+        for i in df.Asset.unique():
+            for ii in range(len(calendar)):
+                if i in mprice.keys():
+                    pass
+                    
                 else:
-                    yesterday_portf = abs((df[(df.Asset == ii) & (df.index == i)].iloc[0].PortFolio -
-                    df[(df.Asset == ii) & (df.index == i)].iloc[0].Yesterday_Portf) / 
-                    df[(df.Asset == ii) & (df.index == i)].iloc[0].PortFolio)
-
-                    today_portf = 1 - yesterday_portf if yesterday_portf < 1 else 1
-
-                    if 'mPrice' in db4.columns:
-                        db3x = db4.reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
-                        mprice = (db3x[(db3x.Asset == ii) & (db3x.index == (i-1))].iloc[0].mPrice * today_portf +
-                            df[(df.Asset == ii) & (df.index == i)].iloc[0].Close * yesterday_portf) / (today_portf + yesterday_portf)
-                        mPrice = {(i, ii): {'mPrice': mprice}}
-                        db4 = pd.concat([db4, pd.DataFrame(mPrice).T], sort=True)
+                    if df[(df.Asset == i) & (df.index == calendar[ii])].empty:
+                        pass
                     else:
-                        print('----------------- NO NO NO ----------------------')
+                        mprice.update({i: {'Date': calendar[ii], 'mPrice': df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Entry_Price}})
+
+        db4 = pd.concat([db4, pd.DataFrame(mprice).T], sort=True)
+        delet = len(db4)
+        mprice = {}
+
+        for i in df.Asset.unique():
+            for ii in range(len(calendar)):
+                if df[(df.Asset == i) & (df.index == calendar[ii])].empty:
+                    pass
+                else:
+                    if df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Yesterday_Portf == 0:
+                        # print(df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0])
+                        mprice.update({i: {'Date': calendar[ii], 'mPrice': df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Entry_Price}})
+                        db4 = pd.concat([db4, pd.DataFrame(mprice).T], sort=True)
+                        mprice = {}
+
+                    else:
+                        yesterday_portf = abs((df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].PortFolio -
+                            df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Yesterday_Portf) / 
+                            df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].PortFolio)
+
+                        today_portf = 1 - yesterday_portf if yesterday_portf < 1 else 1
+
+                        if db4[(db4.index == i) & (db4.Date == calendar[ii-1])].empty:
+                            pass
+                        else:
+                            # print(db4[(db4.index == i) & (db4.Date == calendar[ii-1])])
+                            calc_mprice = (db4[(db4.index == i) & (db4.Date == calendar[ii-1])].iloc[0].mPrice * today_portf +
+                                        df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Close * yesterday_portf) / (today_portf + yesterday_portf)
+                            mprice.update({i: {'Date': calendar[ii], 'mPrice': calc_mprice}})
+                            db4 = pd.concat([db4, pd.DataFrame(mprice).T], sort=True)
+                            mprice = {}
+
+        db4 = db4.reset_index().rename({'index': 'Asset'}, axis=1).set_index(['Date', 'Asset']).iloc[delet:]
 
         df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db4], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
+        df = pd.concat([df, db4], axis=1).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
+        df = df.dropna()
 
+    
         return self._result_partial(df)
 
     #############################################################################################
 
     def _result_partial(self, mprice):
-        import warnings
-        warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
-        warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
-
         df = mprice.copy()
         calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
+        calendar = [i.date() for i in calendar if i in df.index.unique()]
+        calendar = pd.to_datetime(calendar)
 
         db4 = pd.DataFrame()
 
-        for i in calendar:
-            for ii in df[df.index == i].Asset.unique():
-                yesterday_portf = abs((df[(df.Asset == ii) & (df.index == i)].iloc[0].PortFolio -
-                df[(df.Asset == ii) & (df.index == i)].iloc[0].Yesterday_Portf) / 
-                df[(df.Asset == ii) & (df.index == i)].iloc[0].PortFolio)
+        for i in range(len(calendar)):
+            for ii in df[df.index == calendar[i]].Asset.unique():
+                yesterday_portf = abs((df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].PortFolio -
+                df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Yesterday_Portf) / 
+                df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].PortFolio)
 
                 today_portf = 1 - yesterday_portf if yesterday_portf < 1 else 1
 
-                if df[(df.Asset == ii) & (df.index == i)].iloc[0].L_S == 'LONG':
-                    adjust_result = ((df[(df.Asset == ii) & (df.index == (i))].iloc[0].mPrice - 
-                        df[(df.Asset == ii) & (df.index == i)].iloc[0].Close) / df[(df.Asset == ii) & (df.index == i)].iloc[0].Entry_Price) * today_portf * -1
-                elif df[(df.Asset == ii) & (df.index == i)].iloc[0].L_S == 'SHORT':
-                    adjust_result = ((df[(df.Asset == ii) & (df.index == (i))].iloc[0].mPrice - 
-                        df[(df.Asset == ii) & (df.index == i)].iloc[0].Close) / df[(df.Asset == ii) & (df.index == i)].iloc[0].Entry_Price) * today_portf
-                result = {(i, ii): {'Result_Partial': adjust_result}}
+                if df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].L_S == 'LONG':
+                    adjust_result = ((df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].mPrice - 
+                        df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Close) / df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Entry_Price) * today_portf
+                elif df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].L_S == 'SHORT':
+                    adjust_result = ((df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].mPrice - 
+                        df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Close) / df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Entry_Price) * today_portf
+                result = {(calendar[i], ii): {'Result_Partial': adjust_result}}
                 db4 = pd.concat([db4, pd.DataFrame(result).T], sort=True)
 
         df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db4], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
-
+        df = pd.concat([df, db4], axis=1).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
+        
         return self._result_close(df)
 
     #############################################################################################
 
     def _result_close(self, result_partial):
-        import warnings
-        warnings.filterwarnings("ignore", message='Addition/subtraction of integers and integer-arrays to Timestamp is deprecated, will be removed in a future version')
-        warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
-
         df = result_partial.copy()
         calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
+        calendar = [i.date() for i in calendar if i in df.index.unique()]
+        calendar = pd.to_datetime(calendar)
 
         db5 = pd.DataFrame()
 
@@ -348,7 +366,7 @@ class Backtest:
 
 
         df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db5], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
+        df = pd.concat([df, db5], axis=1).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
 
         df['Total_Result'] = df['Result_Partial'] + df['Result_Close']
         
@@ -367,7 +385,7 @@ class Backtest:
                 results_list = pool.map(self._start, seq)
 
                 db = pd.concat(results_list)
-                print(db.head(), db.tail())
+                print(db.tail())
 
         elif model == 'portfolio':
             with Pool(num_process) as pool:
@@ -377,17 +395,28 @@ class Backtest:
 
                 db = pd.concat(results_list)
 
-                print(db.head(), db.tail())
+                print(db.tail())
+
+
+        elif model == 'others':
+            with Pool(num_process) as pool:
+                seq = [df[df.index.year == i] for i in df.index.year.unique()]
+
+                results_list = pool.map(self._mprice, seq)
+
+                db = pd.concat(results_list)
+
+                print(db.tail())
 
         elif model == 'summary':
             with Pool(num_process) as pool:
-                seq = [df[df['Asset'] == i] for i in df.Asset.unique()]
-
+                seq = [df[df.index.year == i] for i in df.index.year.unique()]
+                
                 results_list = pool.map(self._summary, seq)
 
                 db = pd.concat(results_list)
 
-                print(db.head(), db.tail())
+                print(db)
                 db_st = db.groupby(level=[0,1]).sum()
                 
             print('\n Per Asset_Year ... RETURN -> ', 
@@ -400,3 +429,5 @@ class Backtest:
     
         with open(f'./Data/DF/{model.upper()}.pickle', 'wb') as f:
             pickle.dump(db, f, protocol=pickle.HIGHEST_PROTOCOL)   
+
+        
