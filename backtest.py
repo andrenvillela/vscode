@@ -7,10 +7,11 @@ import pickle
 class Backtest:
     
     def __init__(self):
-        pass
+        ''' HERE I DEFINE THE BALANCE TO RUN THE BACKTEST '''
+        self.balance = 100000
 
     def __repr__(self):
-        return 'backtest organize data from trading strategy in new dataframe, option to make a summary using backtest_st and option to build a portfolio management after backtest'
+        return 'backtest organize data from trading strategy in new dataframes'
 
 #############################################################################################
 
@@ -131,7 +132,7 @@ class Backtest:
     #############################################################################################
 
     def _summary(self, df):
-            ''' SUMMARY OF THE BACKTEST() REPORTING ELA ANALISA O ARQUIVO BACKTEST INFORMANDO TX_ACERTO, RISK_RETORNO, RETORNO '''
+            ''' SUMMARY OF THE BACKTEST() REPORTING BACK THE STATS OF STRATEGY '''
             import warnings
             warnings.filterwarnings("ignore") #, message="invalid value encountered in long_scalars")
 
@@ -245,131 +246,99 @@ class Backtest:
 
     #############################################################################################
 
-    def _mprice(self, yesterday_portfolio_df):
-        df = yesterday_portfolio_df.copy()
-        
+    def backtest_final(self, df):
         calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
         calendar = [i.date() for i in calendar if i in df.index.unique()]
         calendar = pd.to_datetime(calendar)
 
-        db4 = pd.DataFrame()
-        mprice = {}
-
-        for i in df.Asset.unique():
-            for ii in range(len(calendar)):
-                if i in mprice.keys():
-                    pass
-                    
-                else:
-                    if df[(df.Asset == i) & (df.index == calendar[ii])].empty:
-                        pass
-                    else:
-                        mprice.update({i: {'Date': calendar[ii], 'mPrice': df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Entry_Price}})
-
-        db4 = pd.concat([db4, pd.DataFrame(mprice).T], sort=True)
-        delet = len(db4)
-        mprice = {}
-
-        for i in df.Asset.unique():
-            for ii in range(len(calendar)):
-                if df[(df.Asset == i) & (df.index == calendar[ii])].empty:
-                    pass
-                else:
-                    if df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Yesterday_Portf == 0:
-                        # print(df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0])
-                        mprice.update({i: {'Date': calendar[ii], 'mPrice': df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Entry_Price}})
-                        db4 = pd.concat([db4, pd.DataFrame(mprice).T], sort=True)
-                        mprice = {}
-
-                    else:
-                        yesterday_portf = abs((df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].PortFolio -
-                            df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Yesterday_Portf) / 
-                            df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].PortFolio)
-
-                        today_portf = 1 - yesterday_portf if yesterday_portf < 1 else 1
-
-                        if db4[(db4.index == i) & (db4.Date == calendar[ii-1])].empty:
-                            pass
-                        else:
-                            # print(db4[(db4.index == i) & (db4.Date == calendar[ii-1])])
-                            calc_mprice = (db4[(db4.index == i) & (db4.Date == calendar[ii-1])].iloc[0].mPrice * today_portf +
-                                        df[(df.Asset == i) & (df.index == calendar[ii])].iloc[0].Close * yesterday_portf) / (today_portf + yesterday_portf)
-                            mprice.update({i: {'Date': calendar[ii], 'mPrice': calc_mprice}})
-                            db4 = pd.concat([db4, pd.DataFrame(mprice).T], sort=True)
-                            mprice = {}
-
-        db4 = db4.reset_index().rename({'index': 'Asset'}, axis=1).set_index(['Date', 'Asset']).iloc[delet:]
-
-        df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db4], axis=1).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
-        df = df.dropna()
-
-    
-        return self._result_partial(df)
-
-    #############################################################################################
-
-    def _result_partial(self, mprice):
-        df = mprice.copy()
-        calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
-        calendar = [i.date() for i in calendar if i in df.index.unique()]
-        calendar = pd.to_datetime(calendar)
-
-        db4 = pd.DataFrame()
+        db7 = pd.DataFrame()
+        mgt = {}
 
         for i in range(len(calendar)):
-            for ii in df[df.index == calendar[i]].Asset.unique():
-                yesterday_portf = abs((df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].PortFolio -
-                df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Yesterday_Portf) / 
-                df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].PortFolio)
+            for ii in df[df.index == calendar[i]].Asset:
+                if ii not in mgt.keys():
+                    portf = df[(df.index == calendar[i]) & (df.Asset == ii)].PortFolio[0]
+                    entry_price = df[(df.index == calendar[i]) & (df.Asset == ii)].Entry_Price[0]
 
-                today_portf = 1 - yesterday_portf if yesterday_portf < 1 else 1
+                    qtd = self.balance * portf / entry_price
 
-                if df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].L_S == 'LONG':
-                    adjust_result = ((df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].mPrice - 
-                        df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Close) / df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Entry_Price) * today_portf
-                elif df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].L_S == 'SHORT':
-                    adjust_result = ((df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].mPrice - 
-                        df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Close) / df[(df.Asset == ii) & (df.index == calendar[i])].iloc[0].Entry_Price) * today_portf
-                result = {(calendar[i], ii): {'Result_Partial': adjust_result}}
-                db4 = pd.concat([db4, pd.DataFrame(result).T], sort=True)
+                    mgt.update({ii: {'Date': calendar[i], 'QTD': qtd}})
 
+                else:
+                    pass
+
+        db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+
+        assets = [i for i in mgt.keys()] 
+        dates = [i.get('Date') for i in mgt.values()] 
+
+        mgt = {}
+
+
+        for i in range(len(calendar)):
+            for ii in df[df.index == calendar[i]].Asset:
+                if df[(df.index == calendar[i]) & (df.Asset == ii)].empty:
+                    print('error')
+                else:
+                    portf = df[(df.index == calendar[i]) & (df.Asset == ii)].PortFolio[0]
+                    close = df[(df.index == calendar[i]) & (df.Asset == ii)].Close[0]
+                    ytd_portf = df[(df.index == calendar[i]) & (df.Asset == ii)].Yesterday_Portf[0]
+                    entry_price = df[(df.index == calendar[i]) & (df.Asset == ii)].Entry_Price[0]
+
+                    if portf == ytd_portf:
+                        if calendar[i].date() == db7.Date[0].date():
+                            pass
+                        else:
+                            if db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].empty:
+                                pass
+                            else:
+                                qtd = db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].QTD[0]
+                                mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
+                                db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+
+                    elif ytd_portf == 0:
+                        qtd = self.balance * portf / entry_price
+                        mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
+                        if calendar[i] in dates and ii in assets: 
+                            pass
+                        else: 
+                            db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+
+                    elif portf > ytd_portf:
+                        if db7[(db7.Date == calendar[i-1])].empty:
+                            pass
+                        else:
+                            qtd = (self.balance * (portf-ytd_portf) / close) + db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].QTD[0]
+                            mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
+                            db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+
+                    elif portf < ytd_portf:
+                        if db7[(db7.Date == calendar[i-1])].empty:
+                            pass
+                        else:
+                            qtd = (1- (ytd_portf - portf)) * db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].QTD[0]
+                            mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
+                            db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+                        
+                    else:
+                        print('nonono')
+
+                db = df[(df.index == calendar[i])][['Asset', 'Close']].reset_index().set_index('Asset')
+                QTD = db7[db7.Date == calendar[i]].drop('Date', axis=1)
+                db = pd.concat([db, QTD], axis=1, sort=True).dropna()
+                
+                db['Total'] = db.Close * db.QTD       
+                self.balance = sum(db.Total)
+
+        db7 = db7.reset_index().rename({'index':'Asset'}, axis=1).set_index(['Date', 'Asset'])
         df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db4], axis=1).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
-        
-        return self._result_close(df)
+        df = pd.concat([df, db7], axis=1, sort=True)
 
-    #############################################################################################
+        df['Balance'] = df.Close * df.QTD
+        df = df.reset_index().set_index('Date')
 
-    def _result_close(self, result_partial):
-        df = result_partial.copy()
-        calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
-        calendar = [i.date() for i in calendar if i in df.index.unique()]
-        calendar = pd.to_datetime(calendar)
+        pd.to_pickle(df, './Data/DF/BACKTEST_FINAL.pickle')
 
-        db5 = pd.DataFrame()
-
-        df['Exit_Date'] = pd.to_datetime(df['Exit_Date'])
-
-        for i in calendar:
-            for ii in df[df.index == i].Asset.unique():
-                if df[(df.index == i) & (df.Asset == ii)].L_S[0] == 'LONG':
-                    result = ((df[(df.index == i) & (df.Asset == ii)].Exit_Price - df[(df.index == i) & (df.Asset == ii)].mPrice) /
-                        df[(df.index == i) & (df.Asset == ii)].Entry_Price) * df[(df.index == i) & (df.Asset == ii)].PortFolio
-                    result_close = {(i, ii): {'Result_Close': result[0]}}
-                elif df[(df.index == i) & (df.Asset == ii)].L_S[0] == 'SHORT':
-                    result = ((df[(df.index == i) & (df.Asset == ii)].Exit_Price - df[(df.index == i) & (df.Asset == ii)].mPrice) /
-                        df[(df.index == i) & (df.Asset == ii)].Entry_Price) * df[(df.index == i) & (df.Asset == ii)].PortFolio * -1
-                    result_close = {(i, ii): {'Result_Close': result[0]}}
-
-                db5 = pd.concat([db5, pd.DataFrame(result_close).T])
-
-
-        df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db5], axis=1).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
-
-        df['Total_Result'] = df['Result_Partial'] + df['Result_Close']
-        
         return df
 
     #############################################################################################
@@ -392,17 +361,6 @@ class Backtest:
                 seq = [df[df.index.year == i] for i in df.index.year.unique()]
 
                 results_list = pool.map(self._portfolio, seq)
-
-                db = pd.concat(results_list)
-
-                print(db.tail())
-
-
-        elif model == 'others':
-            with Pool(num_process) as pool:
-                seq = [df[df.index.year == i] for i in df.index.year.unique()]
-
-                results_list = pool.map(self._mprice, seq)
 
                 db = pd.concat(results_list)
 
