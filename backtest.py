@@ -126,7 +126,6 @@ class Backtest:
             df.set_index('Entry_Date', inplace=True)
             df.sort_index(inplace=True)
 
-
             return df
 
     #############################################################################################
@@ -143,8 +142,8 @@ class Backtest:
             end = df.index[-1].year
             db = pd.DataFrame()
 
-            if 'Total_Result' in df.columns:
-                perc = 'Total_Result'
+            if 'Result' in df.columns:
+                perc = 'Result'
             else:
                 perc = 'Change%'
 
@@ -246,12 +245,12 @@ class Backtest:
 
     #############################################################################################
 
-    def backtest_final(self, df):
+    def _backtest_final(self, df):
         calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
         calendar = [i.date() for i in calendar if i in df.index.unique()]
         calendar = pd.to_datetime(calendar)
 
-        db7 = pd.DataFrame()
+        db5 = pd.DataFrame()
         mgt = {}
 
         for i in range(len(calendar)):
@@ -267,13 +266,12 @@ class Backtest:
                 else:
                     pass
 
-        db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+        db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
 
         assets = [i for i in mgt.keys()] 
         dates = [i.get('Date') for i in mgt.values()] 
 
         mgt = {}
-
 
         for i in range(len(calendar)):
             for ii in df[df.index == calendar[i]].Asset:
@@ -286,64 +284,111 @@ class Backtest:
                     entry_price = df[(df.index == calendar[i]) & (df.Asset == ii)].Entry_Price[0]
 
                     if portf == ytd_portf:
-                        if calendar[i].date() == db7.Date[0].date():
+                        if calendar[i].date() == db5.Date.iloc[0].date():
                             pass
                         else:
-                            if db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].empty:
+                            if db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].empty:
                                 pass
                             else:
-                                qtd = db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].QTD[0]
+                                qtd = db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].QTD[0]
                                 mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                                db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+                                db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
 
                     elif ytd_portf == 0:
+
                         qtd = self.balance * portf / entry_price
                         mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
                         if calendar[i] in dates and ii in assets: 
                             pass
                         else: 
-                            db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+                            db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
 
                     elif portf > ytd_portf:
-                        if db7[(db7.Date == calendar[i-1])].empty:
+                        if db5[(db5.Date == calendar[i-1])].empty:
                             pass
                         else:
-                            qtd = (self.balance * (portf-ytd_portf) / close) + db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].QTD[0]
+                            qtd = (self.balance * (portf-ytd_portf) / close) + db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].QTD[0]
                             mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                            db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+                            db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
 
                     elif portf < ytd_portf:
-                        if db7[(db7.Date == calendar[i-1])].empty:
+                        if db5[(db5.Date == calendar[i-1])].empty:
                             pass
                         else:
-                            qtd = (1- (ytd_portf - portf)) * db7[(db7.Date == calendar[i-1]) & (db7.index == ii)].QTD[0]
+                            qtd = (1- (ytd_portf - portf)) * db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].QTD[0]
                             mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                            db7 = pd.concat([db7, pd.DataFrame(mgt).T], sort=True)
+                            db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
                         
                     else:
                         print('nonono')
 
-                db = df[(df.index == calendar[i])][['Asset', 'Close']].reset_index().set_index('Asset')
-                QTD = db7[db7.Date == calendar[i]].drop('Date', axis=1)
+                db = df[(df.index == calendar[i])][['Asset', 'Close', 'Entry_Price']].reset_index().set_index('Asset')
+                QTD = db5[db5.Date == calendar[i]].drop('Date', axis=1)
                 db = pd.concat([db, QTD], axis=1, sort=True).dropna()
                 
-                db['Total'] = db.Close * db.QTD       
-                self.balance = sum(db.Total)
+                if df[(df.index == calendar[i])].L_S.iloc[0] == 'LONG':
+                    db['Total'] = ((db.Close - db.Entry_Price) + db.Entry_Price) * db.QTD
+                    self.balance = sum(db.Total)
+                else:
+                    db['Total'] = ((db.Close - db.Entry_Price)*-1 + db.Entry_Price) * db.QTD
+                    self.balance = sum(db.Total)
 
-        db7 = db7.reset_index().rename({'index':'Asset'}, axis=1).set_index(['Date', 'Asset'])
+        db5 = db5.reset_index().rename({'index':'Asset'}, axis=1).set_index(['Date', 'Asset'])
         df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db7], axis=1, sort=True)
+        df = pd.concat([df, db5], axis=1, sort=True)
 
-        df['Balance'] = df.Close * df.QTD
+        balance = {}
+        for i in range(len(df)):  
+            if 'LONG' in df.iloc[i].L_S:
+                balance.update({df.index[i]: ((df.iloc[i].Close - df.iloc[i].Entry_Price) + df.iloc[i].Entry_Price) * df.iloc[i].QTD})
+            else:
+                balance.update({df.index[i]: ((df.iloc[i].Close - df.iloc[i].Entry_Price)*-1 + df.iloc[i].Entry_Price) * df.iloc[i].QTD})
+        
+        balance = pd.DataFrame(balance.values(), index=balance.keys()).rename({0: 'Balance'}, axis=1)
+        
+        df = pd.concat([df, balance], axis=1, sort=True)
         df = df.reset_index().set_index('Date')
 
-        pd.to_pickle(df, './Data/DF/BACKTEST_FINAL.pickle')
 
         return df
 
     #############################################################################################
 
-    def backtest(self, df, model):
+    def _backtest(self, df):
+        calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
+        calendar = [i.date() for i in calendar if i in df.index.unique()]
+        calendar = pd.to_datetime(calendar)
+
+        result = []
+
+        for i in range(len(calendar)):
+            for ii in df[df.index == calendar[i]].Asset:
+                if round(df[(df.index == calendar[i]) & (df.Asset == ii)].Balance.iloc[0],0) == 100000:
+                    if df[(df.index == calendar[i]) & (df.Asset == ii)].Exit_Date.iloc[0] - pd.Timedelta(1, 'D') == calendar[i]:
+                        today = df[(df.index == calendar[i]) & (df.Asset == ii)].Balance.iloc[0]
+                        yesterday = (df[(df.index == calendar[i]) & (df.Asset == ii)].Exit_Price.iloc[0] *
+                                    df[(df.index == calendar[i]) & (df.Asset == ii)].QTD.iloc[0])
+                        result.append(((yesterday - today) / yesterday))
+                    else:
+                        today = df[(df.index == calendar[i]) & (df.Asset == ii)].Balance.iloc[0]
+                        yesterday = (df[(df.index == calendar[i]) & (df.Asset == ii)].Close.iloc[0] *
+                                    df[(df.index == calendar[i]) & (df.Asset == ii)].QTD.iloc[0])
+                        result.append(((yesterday - today) / yesterday))
+
+                else:
+                    today = df[(df.index == calendar[i]) & (df.Asset == ii)].Balance.iloc[0]
+                    yesterday = df[(df.index == calendar[i-1]) & (df.Asset == ii)].Balance.iloc[0]
+                    result.append(1- ((yesterday - today) / yesterday) - 1)
+
+
+        df['Result'] = result
+        df = df.drop('Balance', axis=1)
+
+        return df
+
+#############################################################################################
+
+    def backtest(self, df, model, final='Yes'):
         from multiprocessing import Pool, cpu_count
         num_process = min(df.shape[1], cpu_count())
         
@@ -354,7 +399,11 @@ class Backtest:
                 results_list = pool.map(self._start, seq)
 
                 db = pd.concat(results_list)
-                print(db.tail())
+                
+                if final.upper() == 'YES':
+                    return self.backtest(db, 'portfolio')
+                else:
+                    print(db.tail(), db.head())
 
         elif model == 'portfolio':
             with Pool(num_process) as pool:
@@ -364,7 +413,26 @@ class Backtest:
 
                 db = pd.concat(results_list)
 
-                print(db.tail())
+                if final.upper() == 'YES':
+                    return self.backtest(db, 'backtest_final')
+                else:
+                    print(db.tail(), db.head())
+
+        elif model == 'backtest_final':
+            with Pool(num_process) as pool:
+                seq = [df[df.index.year == i] for i in df.index.year.unique()]
+                
+                results_list = pool.map(self._backtest_final, seq)
+
+                db = pd.concat(results_list)
+
+                if final.upper() == 'YES':
+                    db = self._backtest(db)
+                    print(db.tail(), '\n')
+                    print(self.backtest(db, 'summary', 'No'))
+                else:
+                    print(db.tail(), db.head())
+
 
         elif model == 'summary':
             with Pool(num_process) as pool:
