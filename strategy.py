@@ -5,12 +5,10 @@ import pickle
 from backtest import Backtest
 import timeit
 
-''' ENTRY THE BACKTEST TO EXECUTE THE PROGRAM '''
-Bt = Backtest()
-
 ''' STRATEGY NAME, WILL BE USED ON DATAFRAME '''
 name = 'SMA7-20-50'
 
+''' YOUR DATA FILE WITH OHLC AND INDICATORS YOU WILL USE '''
 df = pd.read_pickle('./Data/DF/INDICADOR.pickle')
 
 ''' FILTRE FOR THE DATA TO BE TESTED, YOU CAN FILTRE BY DATE AND ASSETS '''
@@ -33,6 +31,7 @@ def strategy(df):
     strag_l = {}
     strag_s = {}
     db = pd.DataFrame()
+    ''' I use temp in case I change my exit, instead of a condition to be next day or something else '''
     temp = None
 
     for i in range(len(df.index)):
@@ -45,6 +44,7 @@ def strategy(df):
         elif df.iloc[i].SMA20 < df.iloc[i].SMA50: ############################# SETUP EXIT #######
 
             strag_l.update({df.index[i]: (name, df.Asset[i], 'cLONG', df.Close[i])}) 
+            temp = None
 
         else:
             pass
@@ -60,7 +60,8 @@ def strategy(df):
         elif df.iloc[i].SMA20 > df.iloc[i].SMA50: ############################# SETUP EXIT #######
 
             strag_s.update({df.index[i]: (name, df.Asset[i], 'cSHORT', df.Close[i])}) 
-
+            temp = None
+            
         else:
             pass
 
