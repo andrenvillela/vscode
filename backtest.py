@@ -187,8 +187,6 @@ class Backtest:
     def _portfolio(self, backtest):
         ''' HERE THE BACKTEST ADD PORTFOLIO MANAGEMENT TO DATAFRAME '''
 
-        indicador = pd.read_pickle('./Data/DF/INDICADOR.pickle')
-
         backtest = backtest.dropna()
 
         calendar = pd.date_range(start=sorted(set(backtest.index))[0], end=sorted(set(backtest.index))[-1], freq='B')
@@ -202,15 +200,11 @@ class Backtest:
             portf = pd.DataFrame(data=list(np.ones(len(db1)) * 1 / len(db1)), index=[i for i in db1.index], columns=['PortFolio'])
             portf.index.rename('Entry_Date', inplace=True)
             new = pd.concat([db1, portf], axis=1, sort=True).reset_index().set_index(['Asset'])
+            new['Date'] = i
+            db2 = pd.concat([db2, new], sort=True)
             
-            lt_new = [i for i in db1.Asset]
-            close_new = indicador[(indicador.index == (i)) & (indicador.Asset.isin(lt_new))][['Asset', 'Close']]
-            close_new = close_new.reset_index().set_index('Asset')
+        db2 = db2.reset_index().set_index(['Date'])
 
-            new = pd.concat([new, close_new], axis=1, sort=True, join='inner').reset_index().set_index('Date')
-            db2 = db2.append(new)
-
-        
         return self._yesterday_portfolio(db2)
 
     #############################################################################################
@@ -224,7 +218,6 @@ class Backtest:
         calendar = pd.to_datetime(calendar)
 
         db3 = pd.DataFrame()
-        db4 = pd.DataFrame()
 
         for i in range(len(calendar)):
             lt_old = set([i for i in portfolio_df[portfolio_df.index == (calendar[i-1])].Asset])
@@ -239,12 +232,34 @@ class Backtest:
                     adjust_portf = {(calendar[i], ii): {'Yesterday_Portf': yesterday_portf}}
                     db3 = pd.concat([db3, pd.DataFrame(adjust_portf).T])
 
+        db3 = db3.reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index(['Date', 'Asset'])
         df = portfolio_df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db3], axis=1).fillna(0).reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index('Date')
+        df = pd.concat([df, db3], axis=1).reset_index().set_index('Date').fillna(0)
 
         return df
 
     #############################################################################################
+
+    def _closing(self, portfolio):
+        pd.options.mode.chained_assignment = None
+
+        indicador = pd.read_pickle('./Data/DF/INDICADOR.pickle')
+
+        port = portfolio.reset_index().set_index(['Date', 'Asset'])
+        indicador = indicador[['Asset', 'Close']].reset_index().set_index(['Date', 'Asset'])
+        df = pd.concat([port, indicador], axis=1).dropna(thresh=10)
+        nan = df[df.Close.isnull()]
+        nan.Close = df.Entry_Price
+        nan = nan.Close
+        db = df.dropna().Close
+        close = pd.concat([nan, db], sort=True)
+        df = df.drop('Close', axis=1)
+        df = pd.concat([df, close], axis=1, sort=True).reset_index().set_index('Date')
+        
+        return df
+
+    #############################################################################################
+
 
     def _backtest_final(self, df):
 
@@ -260,11 +275,15 @@ class Backtest:
         mgt = {}
 
         for i in range(len(calendar)):
-            for ii in df[df.index == calendar[i]].Asset:
+            for ii in df[df.index == calendar[i]].Asset: ######### .unique()
                 portf = df[(df.index == calendar[i]) & (df.Asset == ii)].PortFolio[0]
-                close = df[(df.index == calendar[i]) & (df.Asset == ii)].Close[0]
+                if df[(df.index == calendar[i]) & (df.Asset == ii)].Close[0] == 0:
+                    close = df[(df.index == calendar[i]) & (df.Asset == ii)].Entry_Price[0]
+                else:
+                    close = df[(df.index == calendar[i]) & (df.Asset == ii)].Close[0]
                 ytd_portf = df[(df.index == calendar[i]) & (df.Asset == ii)].Yesterday_Portf[0]
                 entry_price = df[(df.index == calendar[i]) & (df.Asset == ii)].Entry_Price[0]
+
 
                 if ii not in assets:
                     assets.append(ii)
@@ -341,7 +360,6 @@ class Backtest:
         calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
         calendar = [i.date() for i in calendar if i in df.index.unique()]
         calendar = pd.to_datetime(calendar)
-
         result = {}
 
         for i in range(len(calendar)):
@@ -356,7 +374,7 @@ class Backtest:
         df = df.reset_index().set_index('Date')
 
         df = df.drop('Balance', axis=1)
-
+        
         return df
 
 #############################################################################################
@@ -371,12 +389,13 @@ class Backtest:
 
                 results_list = pool.map(self._start, seq)
 
-                db = pd.concat(results_list)
+                db = pd.concat(results_list, sort=True)
                 
                 if final.upper() == 'YES':
                     return self.backtest(db, 'portfolio')
                 else:
                     print(db.tail(), db.head())
+
 
         elif model == 'portfolio':
             with Pool(num_process) as pool:
@@ -385,11 +404,13 @@ class Backtest:
                 results_list = pool.map(self._portfolio, seq)
 
                 db = pd.concat(results_list)
+                db = self._closing(db)
 
                 if final.upper() == 'YES':
                     return self.backtest(db, 'backtest_final')
                 else:
                     print(db.tail(), db.head())
+
 
         elif model == 'backtest_final':
             with Pool(num_process) as pool:
@@ -401,8 +422,8 @@ class Backtest:
 
                 if final.upper() == 'YES':
                     db = self._backtest(db)
-                    print(db.tail(), '\n')
-                    print(self.backtest(db, 'summary', 'No'))
+                    print(db.head(), db.tail())
+                    self.backtest(db, 'summary', 'No')     
                 else:
                     print(db.tail(), db.head())
 
@@ -415,17 +436,19 @@ class Backtest:
 
                 db = pd.concat(results_list)
 
-                print(db)
+                print(db.head(), '\n', db.tail())
                 db_st = db.groupby(level=[0,1]).sum()
                 
             print('\n Per Asset_Year ... RETURN -> ', 
                 round((sum([db.loc[i, :]['TOTAL_RETURN'].mean() for i in db.index.unique()]) / 
-                db.reset_index().set_index('level_1').index.nunique()),2), 
+                db.reset_index().set_index('level_1').index.nunique()),4), 
                 '& Win_X_Lose ->', round((db_st.groupby(level=[0,1]).mean().mean().Win_X_Lose),2), 
                 '& RISK_RETURN ->', round((db_st.groupby(level=[0,1]).mean().mean().RISK_RETURN),2),
                 '& SHARPE_RATIO ->', round((db['TOTAL_RETURN'].mean() / db['TOTAL_RETURN'].std()) * 
                 (db.reset_index().set_index('level_1').index.nunique()),2))
     
+            pd.to_pickle(db, './Data/DF/SUMMARY.pickle')
+
         with open(f'./Data/DF/{model.upper()}.pickle', 'wb') as f:
             pickle.dump(db, f, protocol=pickle.HIGHEST_PROTOCOL)   
 
