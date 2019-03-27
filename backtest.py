@@ -8,7 +8,11 @@ class Backtest:
     
     def __init__(self):
         ''' HERE I DEFINE THE BALANCE TO RUN THE BACKTEST '''
+        ''' ALSO ADD THE OHLC_IND FILE USED TO RUN STRATEGY '''
+        ''' CALENDAR FROM OHLC_IND USED IN SEVERAL LOOPS '''
         self.balance = 100000
+        self.ohlc_ind = pd.read_pickle('./Data/DF/OHLC_IND.pickle')
+        self.calendar = pd.date_range(start=sorted(set(self.ohlc_ind.index))[0], end=sorted(set(self.ohlc_ind.index))[-1], freq='B')
 
     def __repr__(self):
         return 'backtest organize data from trading strategy in new dataframes'
@@ -18,12 +22,9 @@ class Backtest:
     def _start(self, df):
         """
         DF HAVE THE RESULTS OF STRATEGY().
-        ====================
-        DATABASE HAVE THE FILE USED TO RUN STRATEGY().
         """
 
-        database = pd.read_pickle('./Data/DF/INDICADOR.pickle')
-        database = database[database.Asset == df.Asset[0]]
+        self.ohlc_ind = self.ohlc_ind[self.ohlc_ind.Asset == df.Asset[0]]
 
         lt_long = []
         df1 = pd.DataFrame()
@@ -74,13 +75,13 @@ class Backtest:
         df4 = df4.T.reset_index().rename({'index':'del2', 'Date':'Exit_Date', 'Price':'Exit_Price'}, axis=1)
         df4 = df4.drop(['Asset', 'L_S', 'STRATEGY'], axis=1)
 
-        # Aggregate the BUY-LONG
+        '''Aggregate the BUY-LONG'''
         df5 = pd.concat([df1, df2], axis=1, sort=True)
         df5 = df5.drop(['del1', 'del2'], axis=1) 
         df5 = df5.dropna()
         df5['Change%'] = (df5.Exit_Price - df5.Entry_Price) / df5.Entry_Price
 
-        # Aggregate the SELL-SHORT
+        '''Aggregate the SELL-SHORT'''
         df6 = pd.concat([df3, df4], axis=1, sort=True)
         df6 = df6.drop(['del1', 'del2'], axis=1) 
         df6 = df6.dropna()
@@ -94,10 +95,10 @@ class Backtest:
         minima = {}
         maxima = {}
         for i in range(len(df)):
-            minima.update({df.index[i]: (database.Low[(database.index > df['Entry_Date'][i]) &
-                            (database.index <= df['Exit_Date'][i])].min())})
-            maxima.update({df.index[i]: (database.High[(database.index > df['Entry_Date'][i]) &
-                            (database.index <= df['Exit_Date'][i])].max())})
+            minima.update({df.index[i]: (self.ohlc_ind.Low[(self.ohlc_ind.index > df['Entry_Date'][i]) &
+                            (self.ohlc_ind.index <= df['Exit_Date'][i])].min())})
+            maxima.update({df.index[i]: (self.ohlc_ind.High[(self.ohlc_ind.index > df['Entry_Date'][i]) &
+                            (self.ohlc_ind.index <= df['Exit_Date'][i])].max())})
 
         min_max = pd.concat([
             pd.DataFrame(minima, index=['Min']).T, 
@@ -130,12 +131,146 @@ class Backtest:
 
     #############################################################################################
 
+    def _portfolio(self, df):
+        ''' HERE THE BACKTEST ADD PORTFOLIO TO DATAFRAME '''
+
+        df = df.dropna()
+
+        db1 = pd.DataFrame()
+        db2 = pd.DataFrame()
+
+        for i in self.calendar.unique():
+            df_entry = df[df.index == i]
+            df_exit = df[df.Exit_Date == i]
+            db1 = pd.concat([db1, df_entry, df_exit], sort=True).drop_duplicates(keep=False)
+            portf = pd.DataFrame(data=list(np.ones(len(db1)) * 1 / len(db1)), index=[i for i in db1.index], columns=['PortFolio'])
+            portf.index.rename('Entry_Date', inplace=True)
+            new = pd.concat([db1, portf], axis=1, sort=True).reset_index().set_index(['Asset'])
+            new['Date'] = i
+            db2 = pd.concat([db2, new], sort=True)
+            
+        db2 = db2.reset_index().set_index(['Date'])
+
+        return self._yesterday_portfolio(db2)
+
+    #############################################################################################
+
+    def _yesterday_portfolio(self, df):
+        ''' HERE THE BACKTEST ADD YESTERDAY PORTFOLIO TO DATAFRAME '''
+
+        import warnings
+        warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
+
+        db3 = pd.DataFrame()
+
+        for i in range(len(self.calendar)):
+            lt_old = set([i for i in df[df.index == (self.calendar[i-1])].Asset])
+            lt_new = set([i for i in df[df.index == self.calendar[i]].Asset])
+            lt = lt_old.intersection(lt_new)
+
+            if lt == set():
+                pass
+            else:
+                for ii in lt:
+                    yesterday_portf = [df[(df.Asset == ii) & (df.index == self.calendar[i-1])].PortFolio][0][0]
+                    adjust_portf = {(self.calendar[i], ii): {'Yesterday_Portf': yesterday_portf}}
+                    db3 = pd.concat([db3, pd.DataFrame(adjust_portf).T])
+
+        db3 = db3.reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index(['Date', 'Asset'])
+        df = df.reset_index().set_index(['Date', 'Asset'])
+        df = pd.concat([df, db3], axis=1).reset_index().set_index('Date').fillna(0)
+
+        return self._closing(df)
+
+    #############################################################################################
+
+    def _closing(self, df):
+        ''' HERE ADD CLOSING PRICE FOR INDEX DATE '''
+        pd.options.mode.chained_assignment = None
+
+        port = df.reset_index().set_index(['Date', 'Asset'])
+        self.ohlc_ind = self.ohlc_ind[['Asset', 'Close']].reset_index().set_index(['Date', 'Asset'])
+        df = pd.concat([port, self.ohlc_ind], axis=1).dropna(thresh=10)
+        nan = df[df.Close.isnull()]
+        nan.Close = df.Entry_Price
+        nan = nan.Close
+        db = df.dropna().Close
+        close = pd.concat([nan, db], sort=True)
+        df = df.drop('Close', axis=1)
+        df = pd.concat([df, close], axis=1, sort=True).reset_index().set_index('Date')
+        
+        return df
+
+    #############################################################################################
+
+    def _result(self, df):
+        dicio = {}
+        result = None
+
+        for i in range(len(self.calendar)):
+            for ii in df[df.index == self.calendar[i]].Asset:
+                portf = df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].PortFolio
+                ytd_portf = df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].Yesterday_Portf
+                td_portf = abs(portf - ytd_portf)
+
+                entry = df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].Entry_Price
+                today_close = df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].Close
+                tomorrow_close = df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].Exit_Price
+
+                if self.calendar[i] == self.calendar[-1] or (df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].Exit_Date - self.calendar[i])==(self.calendar[i+1]-self.calendar[i]):                        
+                    '''THE TRADE CLOSE TODAY'''           
+
+                    if df[(df.index == self.calendar[i-1]) & (df.Asset == ii)].empty or df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].Entry_Date == self.calendar[i]:
+                        ''' YESTERDAY WAS EMPTY or ENTRY DATE EQUAL DATE'''
+                        
+                        if df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].L_S == 'LONG':
+                            result = ((tomorrow_close - today_close) / today_close) * portf
+
+                        else:
+                            result = ((tomorrow_close - today_close) / today_close) * -1 * portf  
+                          
+                    else:
+                        yesterday_close = df[(df.index == self.calendar[i-1]) & (df.Asset == ii)].iloc[0].Close
+                        if df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].L_S == 'LONG':
+                            result = (((tomorrow_close - today_close) / today_close) * td_portf + 
+                                    ((today_close - yesterday_close) / today_close) * ytd_portf)
+
+                        else:
+                            result = (((tomorrow_close - today_close) / today_close) * -1 * td_portf + 
+                                    ((today_close - yesterday_close) / today_close) * -1 * ytd_portf)
+
+                else:
+                    if df[(df.index == self.calendar[i-1]) & (df.Asset == ii)].empty or df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].Entry_Date == self.calendar[i]:
+                        ''' YESTERDAY WAS EMPTY or ENTRY DATE EQUAL DATE'''
+
+                        if df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].L_S == 'LONG':
+                            result = ((entry - today_close) / entry) * portf
+      
+                        else:
+                            result = ((entry - today_close) / entry) * -1 * portf   
+
+                    else:
+                        yesterday_close = df[(df.index == self.calendar[i-1]) & (df.Asset == ii)].iloc[0].Close
+                        if df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0].L_S == 'LONG':
+                            result = ((today_close - yesterday_close) / today_close) * ytd_portf
+                                    
+                        else:
+                            result = ((today_close - yesterday_close) / today_close) * -1 * ytd_portf
+
+                dicio.update({(self.calendar[i], ii): {'Result': round(result, 4)}})            
+
+        db = pd.DataFrame(dicio).T
+        df = df.reset_index().set_index(['Date', 'Asset'])
+        df = pd.concat([df, db], axis=1, sort=True)
+        
+        return df
+
+#############################################################################################
+
     def _summary(self, df):
         ''' SUMMARY OF THE BACKTEST() REPORTING BACK THE STATS OF STRATEGY '''
         import warnings
         warnings.filterwarnings("ignore") #, message="invalid value encountered in long_scalars")
-
-        database = pd.read_pickle('./Data/DF/INDICADOR.pickle')
 
         summary = {}
         start = df.index[0].year
@@ -184,201 +319,6 @@ class Backtest:
 
     #############################################################################################
 
-    def _portfolio(self, backtest):
-        ''' HERE THE BACKTEST ADD PORTFOLIO MANAGEMENT TO DATAFRAME '''
-
-        backtest = backtest.dropna()
-
-        calendar = pd.date_range(start=sorted(set(backtest.index))[0], end=sorted(set(backtest.index))[-1], freq='B')
-        db1 = pd.DataFrame()
-        db2 = pd.DataFrame()
-
-        for i in calendar:
-            df_entry = backtest[backtest.index == i]
-            df_exit = backtest[backtest.Exit_Date == i]
-            db1 = pd.concat([db1, df_entry, df_exit], sort=True).drop_duplicates(keep=False)
-            portf = pd.DataFrame(data=list(np.ones(len(db1)) * 1 / len(db1)), index=[i for i in db1.index], columns=['PortFolio'])
-            portf.index.rename('Entry_Date', inplace=True)
-            new = pd.concat([db1, portf], axis=1, sort=True).reset_index().set_index(['Asset'])
-            new['Date'] = i
-            db2 = pd.concat([db2, new], sort=True)
-            
-        db2 = db2.reset_index().set_index(['Date'])
-
-        return self._yesterday_portfolio(db2)
-
-    #############################################################################################
-
-    def _yesterday_portfolio(self, portfolio_df):
-        import warnings
-        warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
-
-        calendar = pd.date_range(start=sorted(set(portfolio_df.index))[0], end=sorted(set(portfolio_df.index))[-1], freq='B')
-        calendar = [i.date() for i in calendar if i in portfolio_df.index.unique()]
-        calendar = pd.to_datetime(calendar)
-
-        db3 = pd.DataFrame()
-
-        for i in range(len(calendar)):
-            lt_old = set([i for i in portfolio_df[portfolio_df.index == (calendar[i-1])].Asset])
-            lt_new = set([i for i in portfolio_df[portfolio_df.index == calendar[i]].Asset])
-            lt = lt_old.intersection(lt_new)
-
-            if lt == set():
-                pass
-            else:
-                for ii in lt:
-                    yesterday_portf = [portfolio_df[(portfolio_df.Asset == ii) & (portfolio_df.index == calendar[i-1])].PortFolio][0][0]
-                    adjust_portf = {(calendar[i], ii): {'Yesterday_Portf': yesterday_portf}}
-                    db3 = pd.concat([db3, pd.DataFrame(adjust_portf).T])
-
-        db3 = db3.reset_index().rename({'level_0': 'Date', 'level_1': 'Asset'}, axis=1).set_index(['Date', 'Asset'])
-        df = portfolio_df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db3], axis=1).reset_index().set_index('Date').fillna(0)
-
-        return df
-
-    #############################################################################################
-
-    def _closing(self, portfolio):
-        pd.options.mode.chained_assignment = None
-
-        indicador = pd.read_pickle('./Data/DF/INDICADOR.pickle')
-
-        port = portfolio.reset_index().set_index(['Date', 'Asset'])
-        indicador = indicador[['Asset', 'Close']].reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([port, indicador], axis=1).dropna(thresh=10)
-        nan = df[df.Close.isnull()]
-        nan.Close = df.Entry_Price
-        nan = nan.Close
-        db = df.dropna().Close
-        close = pd.concat([nan, db], sort=True)
-        df = df.drop('Close', axis=1)
-        df = pd.concat([df, close], axis=1, sort=True).reset_index().set_index('Date')
-        
-        return df
-
-    #############################################################################################
-
-
-    def _backtest_final(self, df):
-
-        df = df.dropna()
-
-        calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
-        calendar = [i.date() for i in calendar if i in df.index.unique()]
-        calendar = pd.to_datetime(calendar)
-
-        db5 = pd.DataFrame()
-        assets = []
-        dates = []
-        mgt = {}
-
-        for i in range(len(calendar)):
-            for ii in df[df.index == calendar[i]].Asset: ######### .unique()
-                portf = df[(df.index == calendar[i]) & (df.Asset == ii)].PortFolio[0]
-                if df[(df.index == calendar[i]) & (df.Asset == ii)].Close[0] == 0:
-                    close = df[(df.index == calendar[i]) & (df.Asset == ii)].Entry_Price[0]
-                else:
-                    close = df[(df.index == calendar[i]) & (df.Asset == ii)].Close[0]
-                ytd_portf = df[(df.index == calendar[i]) & (df.Asset == ii)].Yesterday_Portf[0]
-                entry_price = df[(df.index == calendar[i]) & (df.Asset == ii)].Entry_Price[0]
-
-
-                if ii not in assets:
-                    assets.append(ii)
-                    dates.append(calendar[i])
-                    qtd = self.balance * portf / entry_price
-                    mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                    db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
-
-                elif ytd_portf == 0:
-                    qtd = self.balance * portf / entry_price
-                    mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                    db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
-
-
-                else:
-                    if db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].empty:
-                        pass
-                    else:
-                        if portf == ytd_portf:
-                            qtd = db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].QTD[0]
-                            mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                            db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
-                            
-                        elif portf > ytd_portf:
-                            qtd = (self.balance * (portf-ytd_portf) / close) + db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].QTD[0]
-                            mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                            db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
-
-                        elif portf < ytd_portf:
-                            qtd = (portf / ytd_portf) * db5[(db5.Date == calendar[i-1]) & (db5.index == ii)].QTD[0]
-                            mgt = {ii: {'Date': calendar[i], 'QTD': qtd}}
-                            db5 = pd.concat([db5, pd.DataFrame(mgt).T], sort=True)
-                
-                db = df[(df.index == calendar[i])][['Asset', 'Close', 'Entry_Price', 'L_S']].reset_index().set_index(['Asset', 'Date'])
-                QTD = db5[db5.Date == calendar[i]].reset_index().rename({'index': 'Asset'}, axis=1).set_index(['Asset', 'Date'])#.drop_duplicates(keep='first')
-                db = pd.concat([db, QTD], axis=1, sort=True)
-
-            total = []
-            for iii in range(len(db)):
-                if db.iloc[iii].L_S == 'LONG':
-                    total.append(((db.iloc[iii].Close - db.iloc[iii].Entry_Price) + 
-                        db.iloc[iii].Entry_Price) * db.iloc[iii].QTD)
-                elif db.iloc[iii].L_S == 'SHORT':
-                    total.append(((db.iloc[iii].Close - db.iloc[iii].Entry_Price)*-1 + 
-                        db.iloc[iii].Entry_Price) * db.iloc[iii].QTD)
-
-            if sum(total) > 0:
-                self.balance = sum(total)            
-            else:
-                self.balance = 100000
-
-        db5 = db5.reset_index().rename({'index':'Asset'}, axis=1).set_index(['Date', 'Asset'])
-        df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, db5], axis=1, sort=True)
-
-        balance = {}
-        for i in range(len(df)):  
-            if 'LONG' in df.iloc[i].L_S:
-                balance.update({df.index[i]: ((df.iloc[i].Close - df.iloc[i].Entry_Price) + df.iloc[i].Entry_Price) * df.iloc[i].QTD})
-            else:
-                balance.update({df.index[i]: ((df.iloc[i].Close - df.iloc[i].Entry_Price)*-1 + df.iloc[i].Entry_Price) * df.iloc[i].QTD})
-        
-        balance = pd.DataFrame(balance.values(), index=balance.keys()).rename({0: 'Balance'}, axis=1)
-        
-        df = pd.concat([df, balance], axis=1, sort=True)
-        df = df.reset_index().set_index('Date')
-
-
-        return df
-
-    #############################################################################################
-
-    def _backtest(self, df):
-        calendar = pd.date_range(start=sorted(set(df.index))[0], end=sorted(set(df.index))[-1], freq='B')
-        calendar = [i.date() for i in calendar if i in df.index.unique()]
-        calendar = pd.to_datetime(calendar)
-        result = {}
-
-        for i in range(len(calendar)):
-            today = df[df.index == calendar[i]].Balance.sum()
-            yesterday = df[df.index == calendar[i-1]].Balance.sum()
-            for ii in df[df.index == calendar[i]].Asset:
-                result.update({(calendar[i], ii): {'Result': round(((today/yesterday)-1)/len(df[df.index == calendar[i]]),4)}})
-
-        result = pd.DataFrame(result.values(), result.keys())
-        df = df.reset_index().set_index(['Date', 'Asset'])
-        df = pd.concat([df, result], axis=1, sort=True)
-        df = df.reset_index().set_index('Date')
-
-        df = df.drop('Balance', axis=1)
-        
-        return df
-
-#############################################################################################
-
     def backtest(self, df, model='backtest', final='Yes'):
         from multiprocessing import Pool, cpu_count
         num_process = min(df.shape[1], cpu_count())
@@ -403,26 +343,25 @@ class Backtest:
 
                 results_list = pool.map(self._portfolio, seq)
 
-                db = pd.concat(results_list)
-                db = self._closing(db)
+                db = pd.concat(results_list, sort=True)
 
                 if final.upper() == 'YES':
-                    return self.backtest(db, 'backtest_final')
+                    return self.backtest(db, 'result')
                 else:
                     print(db.tail(), db.head())
 
 
-        elif model == 'backtest_final':
+        elif model == 'result':
             with Pool(num_process) as pool:
                 seq = [df[df.index.year == i] for i in df.index.year.unique()]
                 
-                results_list = pool.map(self._backtest_final, seq)
+                results_list = pool.map(self._result, seq)
 
-                db = pd.concat(results_list)
+                db = pd.concat(results_list, sort=True)
 
                 if final.upper() == 'YES':
-                    db = self._backtest(db)
                     print(db.head(), db.tail())
+                    db = db.reset_index().set_index('Date')
                     self.backtest(db, 'summary', 'No')     
                 else:
                     print(db.tail(), db.head())
@@ -434,14 +373,14 @@ class Backtest:
                 
                 results_list = pool.map(self._summary, seq)
 
-                db = pd.concat(results_list)
+                db = pd.concat(results_list, sort=True)
 
                 print(db.head(), '\n', db.tail())
                 db_st = db.groupby(level=[0,1]).sum()
                 
             print('\n Per Asset_Year ... RETURN -> ', 
-                round((sum([db.loc[i, :]['TOTAL_RETURN'].mean() for i in db.index.unique()]) / 
-                db.reset_index().set_index('level_1').index.nunique()),4), 
+                round(sum([db.loc[i, :]['TOTAL_RETURN'].mean() for i in db.index.unique()]) / 
+                db.reset_index().set_index('level_1').index.nunique(),4), 
                 '& Win_X_Lose ->', round((db_st.groupby(level=[0,1]).mean().mean().Win_X_Lose),2), 
                 '& RISK_RETURN ->', round((db_st.groupby(level=[0,1]).mean().mean().RISK_RETURN),2),
                 '& SHARPE_RATIO ->', round((db['TOTAL_RETURN'].mean() / db['TOTAL_RETURN'].std()) * 
