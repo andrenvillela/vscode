@@ -10,7 +10,9 @@ class Backtest:
         ''' HERE I DEFINE THE BALANCE TO RUN THE BACKTEST '''
         ''' ALSO ADD THE OHLC_IND FILE USED TO RUN STRATEGY '''
         ''' CALENDAR FROM OHLC_IND USED IN SEVERAL LOOPS '''
+        self.name = 'STOCH'
         self.balance = 100000
+        '''ADD THE LOCATION OF DATAFRAME FILE WITH INDICATORS'''
         self.ohlc_ind = pd.read_pickle('./Data/DF/OHLC_IND.pickle')
         self.calendar = pd.date_range(start=sorted(set(self.ohlc_ind.index))[0], end=sorted(set(self.ohlc_ind.index))[-1], freq='B')
 
@@ -19,120 +21,97 @@ class Backtest:
 
 #############################################################################################
 
-    def _start(self, df):
+    def _strategy(self, df):
         """
-        DF HAVE THE RESULTS OF STRATEGY().
+        DF HAVE THE OHLC with the INDICATORS to be used on the STRATEGY below.
         """
 
-        self.ohlc_ind = self.ohlc_ind[self.ohlc_ind.Asset == df.Asset[0]]
+        lt_ = []
+        strag = None
 
-        lt_long = []
-        df1 = pd.DataFrame()
-        df2 = pd.DataFrame()
+        entry = pd.DataFrame()
+        database = pd.DataFrame()
 
-        lt_short = []
-        df3 = pd.DataFrame()
-        df4 = pd.DataFrame()
+        for ii in df.Asset.unique():
+            lt_.clear()
 
-        '''FIRST work the trades on BUY-LONG side, entry-exit'''
-        for i in range(len(df)):
-            if lt_long == []:
-                if df.iloc[i].L_S == 'LONG':
-                    df1 = pd.concat([df1, df.iloc[i]], axis=1, sort=True)
-                    lt_long.append('LONG')
-                else:
+            for i in range(len(self.calendar)):
+            
+                if df[(df.index == self.calendar[i]) & (df.Asset == ii)].empty:
                     pass
+                else:
+                    db = df[(df.index == self.calendar[i]) & (df.Asset == ii)].iloc[0]
+
+                    if lt_ == []:
+                        '''HERE ENTER THE IDEA OF TRADING ENTRY ON LONG AND SHORT SIDE'''
+                        if db.Close > db.SMA7:
+                            entry = pd.DataFrame(data={'Type':[self.name], 'Entry_Date':[self.calendar[i]], 'Entry_Price':[db.Close], 'L_S':['LONG'], 'Asset':[ii]})
+                            lt_.append('LONG')
+                            
+                        
+                        elif db.Close < db.SMA7:
+                            entry = pd.DataFrame(data={'Type':[self.name], 'Entry_Date':[self.calendar[i]], 'Entry_Price':[db.Close], 'L_S':['SHORT'], 'Asset':[ii]})
+                            lt_.append('SHORT')
+
+
+                    elif lt_ == ['LONG']:
+                        '''HERE ENTER THE IDEA OF CLOSING THE LONG TRADING IDEA'''
+                        if db.Close < db.SMA7:
+                            exit = pd.DataFrame(data={'Exit_Date':[self.calendar[i]], 'Exit_Price':[db.Close]})
+                            entry = pd.concat([entry, exit], axis=1, sort=True)
+                            lt_.clear()
+
+
+                    elif lt_ == ['SHORT']:
+                        '''HERE ENTER THE IDEA OF CLOSING THE SHORT TRADING IDEA'''
+                        if db.Close > db.SMA7:
+                            exit = pd.DataFrame(data={'Exit_Date':[self.calendar[i]], 'Exit_Price':[db.Close]})
+                            entry = pd.concat([entry, exit], axis=1, sort=True)
+                            lt_.clear()
+                    
+                    else:
+                        pass
+                                        
+                database = pd.concat([database, entry], sort=True)
+
+        database = database.dropna().drop_duplicates(keep='first').set_index('Entry_Date')
+        database['Duration'] = database.Exit_Date - database.index
+
+        return database
+
+#############################################################################################
+
+    def _minmax(self, df):
+        dicio = {}
+
+        df = df.reset_index()
+
+        for i in range(len(df)):
+            asset = df.Asset.iloc[i]
+            entry = df.Entry_Date.iloc[i]
+            exit = df.Exit_Date.iloc[i]
+            min_period = self.ohlc_ind[(self.ohlc_ind.Asset == asset) & (self.ohlc_ind.index >= entry) & (self.ohlc_ind.index <= exit)].Low.min()
+            max_period = self.ohlc_ind[(self.ohlc_ind.Asset == asset) & (self.ohlc_ind.index >= entry) & (self.ohlc_ind.index <= exit)].High.max()
+            
+            if df.L_S.iloc[i] == 'LONG':
+                max_drawn = (min_period - df.Entry_Price.iloc[i]) / df.Entry_Price.iloc[i]
             else:
-                if df.iloc[i].L_S == 'cLONG':
-                    df2 = pd.concat([df2, df.iloc[i]], axis=1, sort=True)
-                    lt_long.clear()
-                else:
-                    pass
-        '''SECOND work the trades on SELL-SHORT side, entry-exit'''
-        for i in range(len(df)):
-            if lt_short == []:
-                if df.iloc[i].L_S == 'SHORT':
-                    df3 = pd.concat([df3, df.iloc[i]], axis=1, sort=True)
-                    lt_short.append('SHORT')
-                else:
-                    pass
-            else:
-                if df.iloc[i].L_S == 'cSHORT':
-                    df4 = pd.concat([df4, df.iloc[i]], axis=1, sort=True)
-                    lt_short.clear()
-                else:
-                    pass
+                max_drawn = (df.Entry_Price.iloc[i] - max_period) / df.Entry_Price.iloc[i]
+            
+            dicio.update({(entry, asset): {'Min':min_period, 'Max':max_period, 'Max_Drawn': max_drawn}})
 
-        df1 = df1.T.reset_index().rename({'index':'del1', 'Date':'Entry_Date', 'Price':'Entry_Price'}, axis=1)
+        dicio = pd.DataFrame(dicio).T
+        df = df.reset_index().set_index(['Entry_Date', 'Asset'])
 
-        df2 = pd.concat([df2, df.iloc[-1]], axis=1, sort=True)
-        df2 = df2.T.reset_index().rename({'index':'del2', 'Date':'Exit_Date', 'Price':'Exit_Price'}, axis=1)
-        df2 = df2.drop(['Asset', 'L_S', 'STRATEGY'], axis=1)
-
-        df3 = df3.T.reset_index().rename({'index':'del1', 'Date':'Entry_Date', 'Price':'Entry_Price'}, axis=1)
-
-        df4 = pd.concat([df4, df.iloc[-1]], axis=1, sort=True)
-        df4 = df4.T.reset_index().rename({'index':'del2', 'Date':'Exit_Date', 'Price':'Exit_Price'}, axis=1)
-        df4 = df4.drop(['Asset', 'L_S', 'STRATEGY'], axis=1)
-
-        '''Aggregate the BUY-LONG'''
-        df5 = pd.concat([df1, df2], axis=1, sort=True)
-        df5 = df5.drop(['del1', 'del2'], axis=1) 
-        df5 = df5.dropna()
-        df5['Change%'] = (df5.Exit_Price - df5.Entry_Price) / df5.Entry_Price
-
-        '''Aggregate the SELL-SHORT'''
-        df6 = pd.concat([df3, df4], axis=1, sort=True)
-        df6 = df6.drop(['del1', 'del2'], axis=1) 
-        df6 = df6.dropna()
-        df6['Change%'] = (df6.Entry_Price - df6.Exit_Price) / df6.Entry_Price
-
-        df = pd.concat([df5, df6], ignore_index=True)
-        df['Entry_Date'] = pd.to_datetime(df.Entry_Date)
-        df['Exit_Date'] = pd.to_datetime(df.Exit_Date)
-        df['Duration'] = df.Exit_Date - df.Entry_Date
-
-        minima = {}
-        maxima = {}
-        for i in range(len(df)):
-            minima.update({df.index[i]: (self.ohlc_ind.Low[(self.ohlc_ind.index > df['Entry_Date'][i]) &
-                            (self.ohlc_ind.index <= df['Exit_Date'][i])].min())})
-            maxima.update({df.index[i]: (self.ohlc_ind.High[(self.ohlc_ind.index > df['Entry_Date'][i]) &
-                            (self.ohlc_ind.index <= df['Exit_Date'][i])].max())})
-
-        min_max = pd.concat([
-            pd.DataFrame(minima, index=['Min']).T, 
-            pd.DataFrame(maxima, index=['Max']).T
-        ], axis=1)
-
-        df = pd.concat([df, min_max], axis=1)
-
-        max_drawn = {}
-        for i in range(len(df)):
-            if df['L_S'][i] == 'LONG':
-                max_drawn.update({df.index[i]:
-                    (df.Min[i] / df.Entry_Price[i])-1
-                })
-            elif df['L_S'][i] == 'SHORT':
-                max_drawn.update({df.index[i]:
-                    (df.Entry_Price[i] / df.Max[i])-1
-                    })
-            else:
-                pass
-
-        max_drawn = pd.DataFrame(max_drawn, index=['Max_Drawn']).T
-
-        df = pd.concat([df, max_drawn], axis=1)
-
-        df.set_index('Entry_Date', inplace=True)
-        df.sort_index(inplace=True)
+        df = pd.concat([df, dicio], axis=1, sort=True)
+        df = df.reset_index().set_index('Entry_Date').drop('index', axis=1)
+        df = df.sort_index()
 
         return df
 
-    #############################################################################################
-
+#############################################################################################
     def _portfolio(self, df):
-        ''' HERE THE BACKTEST ADD PORTFOLIO TO DATAFRAME '''
+        ''' HERE THE BACKTEST ADD PORTFOLIO DIVISION TO DATAFRAME '''
 
         df = df.dropna()
 
@@ -156,7 +135,7 @@ class Backtest:
     #############################################################################################
 
     def _yesterday_portfolio(self, df):
-        ''' HERE THE BACKTEST ADD YESTERDAY PORTFOLIO TO DATAFRAME '''
+        ''' HERE THE BACKTEST ADD YESTERDAY PORTFOLIO DIVISION TO DATAFRAME '''
 
         import warnings
         warnings.filterwarnings("ignore", message='Passing integers to fillna is deprecated, will raise a TypeError in a future version')
@@ -180,7 +159,7 @@ class Backtest:
         df = df.reset_index().set_index(['Date', 'Asset'])
         df = pd.concat([df, db3], axis=1).reset_index().set_index('Date').fillna(0)
 
-        return self._closing(df)
+        return df
 
     #############################################################################################
 
@@ -319,76 +298,41 @@ class Backtest:
 
     #############################################################################################
 
-    def backtest(self, df, model='backtest', final='Yes'):
+    def _start(self, df):
         from multiprocessing import Pool, cpu_count
         num_process = min(df.shape[1], cpu_count())
-        
-        if model == 'backtest':
-            with Pool(num_process) as pool:
+
+        lt = [self._strategy, self._minmax, self._portfolio, self._closing, self._result, self._summary]
+
+        db = pd.DataFrame()
+
+        for i in lt:
+            print(i)
+            if i == self._strategy:
                 seq = [df[df['Asset'] == i] for i in df.Asset.unique()]
-
-                results_list = pool.map(self._start, seq)
-
-                db = pd.concat(results_list, sort=True)
-                
-                if final.upper() == 'YES':
-                    return self.backtest(db, 'portfolio')
-                else:
-                    print(db.tail(), db.head())
-
-
-        elif model == 'portfolio':
+            elif i == self._summary:
+                db = db.reset_index().set_index('Date')
+                seq = [db[db.index.year == i] for i in db.index.year.unique()]
+            else:
+                seq = [db[db.index.year == i] for i in db.index.year.unique()]
+            
             with Pool(num_process) as pool:
-                seq = [df[df.index.year == i] for i in df.index.year.unique()]
+                results_list = pool.map(i, seq)
 
-                results_list = pool.map(self._portfolio, seq)
+                db = pd.concat(results_list, sort=True)    
 
-                db = pd.concat(results_list, sort=True)
+                i = str(i).split('_')[1].split(' ')[0].upper()
 
-                if final.upper() == 'YES':
-                    return self.backtest(db, 'result')
-                else:
-                    print(db.tail(), db.head())
+                pd.to_pickle(db, f'./Data/BACKTEST/{i}.pickle')
+                print(db.head()) 
 
-
-        elif model == 'result':
-            with Pool(num_process) as pool:
-                seq = [df[df.index.year == i] for i in df.index.year.unique()]
+        db_st = db.groupby(level=[0,1]).sum()
                 
-                results_list = pool.map(self._result, seq)
-
-                db = pd.concat(results_list, sort=True)
-
-                if final.upper() == 'YES':
-                    print(db.head(), db.tail())
-                    db = db.reset_index().set_index('Date')
-                    self.backtest(db, 'summary', 'No')     
-                else:
-                    print(db.tail(), db.head())
-
-
-        elif model == 'summary':
-            with Pool(num_process) as pool:
-                seq = [df[df.index.year == i] for i in df.index.year.unique()]
-                
-                results_list = pool.map(self._summary, seq)
-
-                db = pd.concat(results_list, sort=True)
-
-                print(db.head(), '\n', db.tail())
-                db_st = db.groupby(level=[0,1]).sum()
-                
-            print('\n Per Asset_Year ... RETURN -> ', 
-                round(sum([db.loc[i, :]['TOTAL_RETURN'].mean() for i in db.index.unique()]) / 
-                db.reset_index().set_index('level_1').index.nunique(),4), 
-                '& Win_X_Lose ->', round((db_st.groupby(level=[0,1]).mean().mean().Win_X_Lose),2), 
-                '& RISK_RETURN ->', round((db_st.groupby(level=[0,1]).mean().mean().RISK_RETURN),2),
-                '& SHARPE_RATIO ->', round((db['TOTAL_RETURN'].mean() / db['TOTAL_RETURN'].std()) * 
-                (db.reset_index().set_index('level_1').index.nunique()),2))
-    
-            pd.to_pickle(db, './Data/DF/SUMMARY.pickle')
-
-        with open(f'./Data/DF/{model.upper()}.pickle', 'wb') as f:
-            pickle.dump(db, f, protocol=pickle.HIGHEST_PROTOCOL)   
-
+        print('\n Per Asset_Year ... RETURN -> ', 
+            round(sum([db.loc[i, :]['TOTAL_RETURN'].mean() for i in db.index.unique()]) / 
+            db.reset_index().set_index('level_1').index.nunique(),4), 
+            '& Win_X_Lose ->', round((db_st.groupby(level=[0,1]).mean().mean().Win_X_Lose),2), 
+            '& RISK_RETURN ->', round((db_st.groupby(level=[0,1]).mean().mean().RISK_RETURN),2),
+            '& SHARPE_RATIO ->', round((db['TOTAL_RETURN'].mean() / db['TOTAL_RETURN'].std()) * 
+            (db.reset_index().set_index('level_1').index.nunique()),2))
         
