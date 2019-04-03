@@ -1,4 +1,4 @@
-Well, I am first of all not a professional programmer, I am a trader that learned programming so do not expect pythonic code... SORRY !!!
+Well, I am first of all not a professional programmer (started learning python on Jan-2019!), I am a trader that learned programming so do not expect pythonic code for now... SORRY !!!
 
 I added 1 file for backtest, witch is very easy to modify and test new parameters so you can backtest it. You just need to work on original OHLC to add the indicators you want or any requirement that will fit into backtest.py.
 
